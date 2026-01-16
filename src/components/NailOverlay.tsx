@@ -220,9 +220,35 @@ export const NailOverlay: React.FC<NailOverlayProps> = ({
     
   };
 
+  // Pinch Zoom Refs
+  const pinchStartDistRef = useRef<number>(0);
+  const pinchStartScaleRef = useRef<number>(1);
+
+  // Helper for Pinch
+  const getPinchDist = (e: React.TouchEvent) => {
+     if (e.touches.length < 2) return 0;
+     const t1 = e.touches[0];
+     const t2 = e.touches[1];
+     return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+  };
+
   // Touch Logic mirroring Mouse Logic
   const handleTouchStart = (e: React.TouchEvent, index: number | null, mode: string) => {
     e.stopPropagation();
+    
+    // Handle Pinch Start (2 fingers)
+    if (e.touches.length === 2) {
+       const dist = getPinchDist(e);
+       pinchStartDistRef.current = dist;
+       pinchStartScaleRef.current = transform.scale;
+       
+       // Cancel other interactions
+       setIsPanning(false);
+       setActiveId(null);
+       setInteractionMode(null);
+       return;
+    }
+
     const touch = e.touches[0];
     
     if (index === null) {
@@ -243,9 +269,24 @@ export const NailOverlay: React.FC<NailOverlayProps> = ({
     e.stopPropagation();
     if (e.cancelable) e.preventDefault(); // Prevent scrolling
 
+    // 1. Handle Pinch Zoom (High Priority)
+    if (e.touches.length === 2) {
+       const dist = getPinchDist(e);
+       if (pinchStartDistRef.current > 0 && dist > 0) {
+          const scaleRatio = dist / pinchStartDistRef.current;
+          const newScale = Math.min(Math.max(0.5, pinchStartScaleRef.current * scaleRatio), 5);
+          
+          setTransform(prev => ({
+             ...prev,
+             scale: newScale
+          }));
+       }
+       return;
+    }
+
     const touch = e.touches[0];
 
-    // 1. Handle Panning
+    // 2. Handle Panning
     if (isPanning) {
        const dx = touch.clientX - panStartRef.current.x;
        const dy = touch.clientY - panStartRef.current.y;
@@ -254,18 +295,17 @@ export const NailOverlay: React.FC<NailOverlayProps> = ({
           x: panStartTransformRef.current.x + dx,
           y: panStartTransformRef.current.y + dy
        });
+       // Don't return, as we strictly handled panning logic? 
+       // Wait, if Panning, we definitely don't want to drag objects.
        return;
     }
 
-    // 2. Handle Object Interactions
+    // 3. Handle Object Interactions
     if (activeId === null || !interactionMode || !containerRef.current || !initialMeasurementRef.current) return;
     
+    // ... rest of drag/resize logic ...
     const container = containerRef.current;
     const rect = container.getBoundingClientRect(); 
-    
-    // Logic identical to mouse move, just using touch coords
-    // Re-use core logic? For now, duplicate to ensure types are correct 
-    // (Mouse vs Touch event properties differ slightly)
     
     const initialM = initialMeasurementRef.current;
     const cxNorm = initialM.boundingBox.x;
@@ -358,6 +398,7 @@ export const NailOverlay: React.FC<NailOverlayProps> = ({
     
     onMeasurementsChange(newMeasurements);
   };
+
 
   const handleTouchEnd = () => {
     setIsPanning(false);
