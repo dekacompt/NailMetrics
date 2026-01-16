@@ -218,7 +218,151 @@ export const NailOverlay: React.FC<NailOverlayProps> = ({
        };
     }
     
+  };
+
+  // Touch Logic mirroring Mouse Logic
+  const handleTouchStart = (e: React.TouchEvent, index: number | null, mode: string) => {
+    e.stopPropagation();
+    const touch = e.touches[0];
+    
+    if (index === null) {
+       // Pan Start
+       setIsPanning(true);
+       panStartRef.current = { x: touch.clientX, y: touch.clientY };
+       panStartTransformRef.current = { x: transform.x, y: transform.y };
+       return;
+    }
+
+    setActiveId(index);
+    setInteractionMode(mode);
+    dragStartRef.current = { x: touch.clientX, y: touch.clientY };
+    initialMeasurementRef.current = { ...measurements[index] };
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    e.stopPropagation();
+    if (e.cancelable) e.preventDefault(); // Prevent scrolling
+
+    const touch = e.touches[0];
+
+    // 1. Handle Panning
+    if (isPanning) {
+       const dx = touch.clientX - panStartRef.current.x;
+       const dy = touch.clientY - panStartRef.current.y;
+       setTransform({
+          ...transform,
+          x: panStartTransformRef.current.x + dx,
+          y: panStartTransformRef.current.y + dy
+       });
+       return;
+    }
+
+    // 2. Handle Object Interactions
+    if (activeId === null || !interactionMode || !containerRef.current || !initialMeasurementRef.current) return;
+    
+    const container = containerRef.current;
+    const rect = container.getBoundingClientRect(); 
+    
+    // Logic identical to mouse move, just using touch coords
+    // Re-use core logic? For now, duplicate to ensure types are correct 
+    // (Mouse vs Touch event properties differ slightly)
+    
+    const initialM = initialMeasurementRef.current;
+    const cxNorm = initialM.boundingBox.x;
+    const cyNorm = initialM.boundingBox.y;
+    
+    const centerX = rect.left + cxNorm * rect.width;
+    const centerY = rect.top + cyNorm * rect.height;
+    
+    const dxPx = touch.clientX - dragStartRef.current.x;
+    const dyPx = touch.clientY - dragStartRef.current.y;
+    
+    const newMeasurements = [...measurements];
+    
+    if (interactionMode === 'rotate') {
+       const vecX = touch.clientX - centerX;
+       const vecY = touch.clientY - centerY;
+       const currentAngle = Math.atan2(vecY, vecX);
+       
+       const startVecX = dragStartRef.current.x - centerX;
+       const startVecY = dragStartRef.current.y - centerY;
+       const startAngle = Math.atan2(startVecY, startVecX);
+       
+       const deltaRotation = currentAngle - startAngle;
+       
+       newMeasurements[activeId] = {
+         ...initialM,
+         boundingBox: {
+           ...initialM.boundingBox,
+           rotation: initialM.boundingBox.rotation + deltaRotation
+         }
+       };
+
+    } else if (interactionMode === 'drag') {
+       const dx = dxPx / rect.width;
+       const dy = dyPx / rect.height;
+       
+       newMeasurements[activeId] = {
+         ...initialM,
+         boundingBox: {
+           ...initialM.boundingBox,
+           x: initialM.boundingBox.x + dx,
+           y: initialM.boundingBox.y + dy
+         }
+       };
+    } else if (interactionMode.startsWith('resize')) {
+       const dx = dxPx / rect.width;
+       const dy = dyPx / rect.height;
+       
+       const rotation = initialM.boundingBox.rotation;
+       const cos = Math.cos(-rotation);
+       const sin = Math.sin(-rotation);
+       
+       const localDx = dx * cos - dy * sin;
+       const localDy = dx * sin + dy * cos;
+       
+       let newW = initialM.boundingBox.width;
+       let newH = initialM.boundingBox.height;
+       let shiftLocalX = 0;
+       let shiftLocalY = 0;
+
+       switch (interactionMode) {
+          case 'resize-e': 
+             newW = Math.max(0.01, initialM.boundingBox.width + localDx);
+             shiftLocalX = localDx / 2; break;
+          case 'resize-w': 
+             newW = Math.max(0.01, initialM.boundingBox.width - localDx);
+             shiftLocalX = localDx / 2; break;
+          case 'resize-s': 
+             newH = Math.max(0.01, initialM.boundingBox.height + localDy);
+             shiftLocalY = localDy / 2; break;
+          case 'resize-n': 
+             newH = Math.max(0.01, initialM.boundingBox.height - localDy);
+             shiftLocalY = localDy / 2; break;
+       }
+
+       const globalShiftX = shiftLocalX * Math.cos(rotation) - shiftLocalY * Math.sin(rotation);
+       const globalShiftY = shiftLocalX * Math.sin(rotation) + shiftLocalY * Math.cos(rotation);
+
+       newMeasurements[activeId] = {
+         ...initialM,
+         boundingBox: {
+           ...initialM.boundingBox,
+           width: newW,
+           height: newH,
+           x: initialM.boundingBox.x + globalShiftX,
+           y: initialM.boundingBox.y + globalShiftY
+         }
+       };
+    }
+    
     onMeasurementsChange(newMeasurements);
+  };
+
+  const handleTouchEnd = () => {
+    setIsPanning(false);
+    setActiveId(null);
+    setInteractionMode(null);
   };
 
   const handleMouseUp = () => {
@@ -229,11 +373,14 @@ export const NailOverlay: React.FC<NailOverlayProps> = ({
 
   return (
     <div 
-      className="relative w-full h-full min-h-[500px] overflow-hidden bg-neutral-900/50 rounded-xl cursor-grab active:cursor-grabbing border border-neutral-800"
+      className="relative w-full h-full min-h-[500px] overflow-hidden bg-neutral-900/50 rounded-xl cursor-grab active:cursor-grabbing border border-neutral-800 touch-none"
       onWheel={handleWheel}
       onMouseDown={(e) => handleMouseDown(e, null, 'pan')}
+      onTouchStart={(e) => handleTouchStart(e, null, 'pan')}
       onMouseMove={handleMouseMove}
+      onTouchMove={handleTouchMove}
       onMouseUp={handleMouseUp}
+      onTouchEnd={handleTouchEnd}
       onMouseLeave={handleMouseUp}
     > 
       {/* Transformed Container */}
@@ -291,17 +438,17 @@ export const NailOverlay: React.FC<NailOverlayProps> = ({
                    isActive ? "border-yellow-400 bg-yellow-400/20 z-50" : ""
                  )}
                  onMouseDown={(e) => handleMouseDown(e, index, 'drag')}
+                 onTouchStart={(e) => handleTouchStart(e, index, 'drag')}
                  onMouseEnter={() => onHighlight?.(index)}
                  onMouseLeave={() => onHighlight?.(null)}
                >
                   {/* Edges - Scale Invariant Handles? */}
-                  {/* If we zoom out, handles get tiny. If zoom in, huge. */}
-                  {/* Ideally handles should counter-scale, but let's stick to simple first. */}
                   
                   {/* Top (N) */}
                   <div 
                     className="absolute top-0 left-0 right-0 h-4 -mt-2 cursor-n-resize group/handle flex justify-center items-center z-10"
                     onMouseDown={(e) => handleMouseDown(e, index, 'resize-n')}
+                    onTouchStart={(e) => handleTouchStart(e, index, 'resize-n')}
                   >
                      <div className="w-8 h-1 bg-white/80 rounded-full group-hover/handle:bg-yellow-400 transition-colors shadow-sm" />
                   </div>
@@ -310,6 +457,7 @@ export const NailOverlay: React.FC<NailOverlayProps> = ({
                   <div 
                     className="absolute bottom-0 left-0 right-0 h-4 -mb-2 cursor-s-resize group/handle flex justify-center items-center z-10"
                     onMouseDown={(e) => handleMouseDown(e, index, 'resize-s')}
+                    onTouchStart={(e) => handleTouchStart(e, index, 'resize-s')}
                   >
                      <div className="w-8 h-1 bg-white/80 rounded-full group-hover/handle:bg-yellow-400 transition-colors shadow-sm" />
                   </div>
@@ -318,6 +466,7 @@ export const NailOverlay: React.FC<NailOverlayProps> = ({
                   <div 
                     className="absolute top-0 bottom-0 left-0 w-4 -ml-2 cursor-w-resize group/handle flex flex-col justify-center items-center z-10"
                     onMouseDown={(e) => handleMouseDown(e, index, 'resize-w')}
+                    onTouchStart={(e) => handleTouchStart(e, index, 'resize-w')}
                   >
                      <div className="h-8 w-1 bg-white/80 rounded-full group-hover/handle:bg-yellow-400 transition-colors shadow-sm" />
                   </div>
@@ -326,14 +475,16 @@ export const NailOverlay: React.FC<NailOverlayProps> = ({
                   <div 
                     className="absolute top-0 bottom-0 right-0 w-4 -mr-2 cursor-e-resize group/handle flex flex-col justify-center items-center z-10"
                     onMouseDown={(e) => handleMouseDown(e, index, 'resize-e')}
+                    onTouchStart={(e) => handleTouchStart(e, index, 'resize-e')}
                   >
                      <div className="h-8 w-1 bg-white/80 rounded-full group-hover/handle:bg-yellow-400 transition-colors shadow-sm" />
                   </div>
 
-                  {/* Rotate Handle (Stick extending from Top) */}
+                  {/* Rotate Handle */}
                   <div 
                      className="absolute -top-8 left-1/2 -ml-0.5 w-1 h-8 bg-white/50 z-10 group/rotate"
                      onMouseDown={(e) => handleMouseDown(e, index, 'rotate')}
+                     onTouchStart={(e) => handleTouchStart(e, index, 'rotate')}
                   >
                      <div className="absolute top-0 left-1/2 -ml-1.5 -mt-1.5 w-3 h-3 bg-white rounded-full border border-neutral-500 shadow-md cursor-grab group-active/rotate:cursor-grabbing hover:bg-yellow-400" />
                   </div>

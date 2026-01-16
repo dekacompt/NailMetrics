@@ -79,6 +79,44 @@ export function CoinOverlay({ onCalibrationChange, isVisible, scale = 1 }: CoinO
     setIsResizing(false);
   };
 
+  // Touch Handlers mapping to Mouse Logic
+  const handleTouchStart = (e: React.TouchEvent, mode: 'drag' | 'resize') => {
+    e.stopPropagation(); 
+    const touch = e.touches[0];
+    if (mode === 'drag') setIsDragging(true);
+    if (mode === 'resize') setIsResizing(true);
+    dragStartRef.current = { x: touch.clientX, y: touch.clientY };
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (!isDragging && !isResizing) return;
+    
+    // Prevent scrolling strictly when interacting
+    if (e.cancelable) e.preventDefault(); 
+    e.stopPropagation();
+
+    const touch = e.touches[0];
+    const dx = (touch.clientX - dragStartRef.current.x) / scale;
+    const dy = (touch.clientY - dragStartRef.current.y) / scale;
+
+    if (isDragging) {
+      setPosition(prev => ({
+        x: prev.x + dx,
+        y: prev.y + dy
+      }));
+    } else if (isResizing) {
+      const delta = Math.max(dx, dy); 
+      setDiameter(prev => Math.max(20, prev + delta));
+    }
+
+    dragStartRef.current = { x: touch.clientX, y: touch.clientY };
+  };
+
+  const handleTouchEnd = () => {
+    setIsDragging(false);
+    setIsResizing(false);
+  };
+
   return (
     <div 
       ref={overlayRef}
@@ -89,6 +127,8 @@ export function CoinOverlay({ onCalibrationChange, isVisible, scale = 1 }: CoinO
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
     >
       <div className="absolute top-4 left-4 bg-black/60 backdrop-blur px-4 py-2 rounded-lg text-sm border border-white/10 z-50">
         <p className="font-bold text-yellow-400">🪙 Coin Calibration Mode</p>
@@ -108,6 +148,7 @@ export function CoinOverlay({ onCalibrationChange, isVisible, scale = 1 }: CoinO
           top: position.y,
         }}
         onMouseDown={(e) => handleMouseDown(e, 'drag')}
+        onTouchStart={(e) => handleTouchStart(e, 'drag')}
       >
         {/* Safe Area / Crosshair */}
         <div className="absolute inset-0 flex items-center justify-center opacity-30 pointer-events-none">
@@ -121,6 +162,10 @@ export function CoinOverlay({ onCalibrationChange, isVisible, scale = 1 }: CoinO
            onMouseDown={(e) => {
              e.stopPropagation();
              handleMouseDown(e, 'resize');
+           }}
+           onTouchStart={(e) => {
+             e.stopPropagation();
+             handleTouchStart(e, 'resize');
            }}
         >
           <div className="w-2 h-2 bg-black rounded-full" />
